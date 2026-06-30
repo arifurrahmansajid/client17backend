@@ -21,6 +21,9 @@ mongoose.connect(process.env.MONGODB_URI)
     console.error('Error connecting to MongoDB:', err);
   });
 
+// Routes
+app.use('/api/auth', require('./routes/auth'));
+
 // Basic route
 app.get('/', (req, res) => {
   res.send('VIP Investment API is running...');
