@@ -3,6 +3,32 @@ const router = express.Router();
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 
+// Register Route
+router.post('/register', async (req, res) => {
+  try {
+    const { phoneNumber, password } = req.body;
+
+    // Check if user exists
+    let user = await User.findOne({ phoneNumber });
+    if (user) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    // Create new user
+    user = new User({
+      phoneNumber,
+      password
+    });
+
+    await user.save();
+
+    res.status(201).json({ message: 'User registered successfully' });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ message: 'Server error during registration' });
+  }
+});
+
 // Login Route
 router.post('/login', async (req, res) => {
   try {
