@@ -32,7 +32,11 @@ app.get('/', (req, res) => {
   res.send('VIP Investment API is running...');
 });
 
-// Server listener
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Server listener (only if not running on Vercel)
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+module.exports = app;
