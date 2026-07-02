@@ -19,6 +19,23 @@ const userSchema = new mongoose.Schema({
   avatar: {
     type: String,
     default: ''
+  },
+  balance: {
+    type: Number,
+    default: 0
+  },
+  plan: {
+    type: String,
+    default: 'None'
+  },
+  referrals: {
+    type: Number,
+    default: 0
+  },
+  status: {
+    type: String,
+    enum: ['active', 'pending', 'suspended'],
+    default: 'active'
   }
 }, { timestamps: true });
 

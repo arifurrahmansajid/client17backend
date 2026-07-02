@@ -62,4 +62,53 @@ router.put('/avatar', authenticateToken, async (req, res) => {
   }
 });
 
+// Middleware to check if user is admin or super admin
+const isAdmin = (req, res, next) => {
+  if (req.user && (req.user.role === 'admin' || req.user.role === 'super_admin')) {
+    next();
+  } else {
+    res.status(403).json({ message: 'Access denied: Admin role required' });
+  }
+};
+
+// @route   GET /api/user/all
+// @desc    Get all users (Admin only)
+router.get('/all', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching all users:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// @route   PUT /api/user/update/:id
+// @desc    Update a user's details (Admin only)
+router.put('/update/:id', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { balance, plan, referrals, status } = req.body;
+    const updateData = {};
+    if (balance !== undefined) updateData.balance = Number(balance);
+    if (plan !== undefined) updateData.plan = plan;
+    if (referrals !== undefined) updateData.referrals = Number(referrals);
+    if (status !== undefined) updateData.status = status;
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { $set: updateData },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({ message: 'User updated successfully', user });
+  } catch (error) {
+    console.error('Error updating user details:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
 module.exports = router;
