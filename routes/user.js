@@ -111,16 +111,103 @@ router.put('/update/:id', authenticateToken, isAdmin, async (req, res) => {
   }
 });
 
-const Income = require('../models/Income');
+const Transaction = require('../models/Transaction');
 
 // @route   GET /api/user/income
 // @desc    Get all income records (Admin only)
 router.get('/income', authenticateToken, isAdmin, async (req, res) => {
   try {
-    const records = await Income.find().sort({ createdAt: -1 });
-    res.json(records);
+    const records = await Transaction.find({ type: 'income' }).sort({ createdAt: -1 });
+    // Map description to source for backwards compatibility with the frontend
+    const mapped = records.map(r => ({
+      _id: r._id,
+      userPhone: r.userPhone,
+      source: r.description,
+      amount: r.amount,
+      createdAt: r.createdAt
+    }));
+    res.json(mapped);
   } catch (error) {
     console.error('Error fetching income records:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// @route   GET /api/user/stats
+// @desc    Get admin dashboard overview statistics (Admin only)
+router.get('/stats', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments();
+    const activePlans = await User.countDocuments({ plan: { $ne: 'None' } });
+
+    // Calculate deposits (sum of type='deposit' and status='approved')
+    const deposits = await Transaction.aggregate([
+      { $match: { type: 'deposit', status: 'approved' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    const totalDeposits = deposits.length > 0 ? deposits[0].total : 0;
+
+    // Calculate withdrawals (sum of type='withdraw' and status='approved')
+    const withdrawals = await Transaction.aggregate([
+      { $match: { type: 'withdraw', status: 'approved' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    const totalWithdrawals = withdrawals.length > 0 ? withdrawals[0].total : 0;
+
+    // Calculate daily income (sum of yields today)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const daily = await Transaction.aggregate([
+      { $match: { type: 'income', createdAt: { $gte: today } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    const dailyIncome = daily.length > 0 ? daily[0].total : 0;
+
+    const netRevenue = totalDeposits - totalWithdrawals;
+
+    // Get 10 recent transactions
+    const recentTransactions = await Transaction.find()
+      .sort({ createdAt: -1 })
+      .limit(10);
+
+    res.json({
+      success: true,
+      stats: {
+        totalUsers,
+        totalDeposits,
+        totalWithdrawals,
+        dailyIncome,
+        activePlans,
+        netRevenue
+      },
+      recentTransactions
+    });
+  } catch (error) {
+    console.error('Error fetching admin statistics:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// @route   GET /api/user/transactions
+// @desc    Get all transactions (Admin only)
+router.get('/transactions', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const transactions = await Transaction.find().sort({ createdAt: -1 });
+    res.json(transactions);
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// @route   GET /api/user/my-transactions
+// @desc    Get logged-in user's transactions
+router.get('/my-transactions', authenticateToken, async (req, res) => {
+  try {
+    const transactions = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(transactions);
+  } catch (error) {
+    console.error('Error fetching user transactions:', error);
     res.status(500).json({ message: 'Server Error' });
   }
 });

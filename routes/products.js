@@ -3,7 +3,7 @@ const router = express.Router();
 const Product = require('../models/Product');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const Income = require('../models/Income');
+const Transaction = require('../models/Transaction');
 
 // Middleware to authenticate token
 const authenticateToken = (req, res, next) => {
@@ -154,12 +154,14 @@ router.post('/purchase', authenticateToken, async (req, res) => {
     user.balance -= product.price;
     await user.save();
 
-    // Log the purchase in Income/Transactions records with negative amount
-    const purchaseLog = new Income({
+    // Log the purchase in Transactions records with negative amount
+    const purchaseLog = new Transaction({
       userId: user._id,
       userPhone: user.phoneNumber,
-      source: `${product.name} Purchase`,
-      amount: -product.price
+      type: 'purchase',
+      amount: -product.price,
+      status: 'completed',
+      description: `${product.name} Purchase`
     });
     await purchaseLog.save();
 
