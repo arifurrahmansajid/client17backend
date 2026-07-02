@@ -313,4 +313,101 @@ router.get('/my-deposits', authenticateToken, async (req, res) => {
   }
 });
 
+// @route   GET /api/user/withdrawals
+// @desc    Get all withdrawals (Admin only)
+router.get('/withdrawals', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const list = await Transaction.find({ type: 'withdraw' }).sort({ createdAt: -1 });
+    res.json(list);
+  } catch (error) {
+    console.error('Error fetching withdrawals:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// @route   PUT /api/user/withdraw/:id
+// @desc    Approve or reject a withdrawal request (Admin only)
+router.put('/withdraw/:id', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { status } = req.body; // 'approved' or 'rejected'
+    if (status !== 'approved' && status !== 'rejected') {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const transaction = await Transaction.findById(req.params.id);
+    if (!transaction) {
+      return res.status(404).json({ success: false, message: 'Transaction not found' });
+    }
+
+    if (transaction.type !== 'withdraw') {
+      return res.status(400).json({ success: false, message: 'Transaction is not a withdrawal' });
+    }
+
+    if (transaction.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Withdrawal has already been processed' });
+    }
+
+    transaction.status = status;
+    await transaction.save();
+
+    // If rejected, refund the deducted amount back to user balance
+    if (status === 'rejected') {
+      const user = await User.findById(transaction.userId);
+      if (user) {
+        user.balance += Math.abs(transaction.amount);
+        await user.save();
+      }
+    }
+
+    res.json({ success: true, message: `Withdrawal request ${status} successfully!`, transaction });
+  } catch (error) {
+    console.error('Update withdrawal status error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   POST /api/user/withdraw
+// @desc    Submit a withdrawal request (User)
+router.post('/withdraw', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid withdrawal amount' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.balance < Number(amount)) {
+      return res.status(400).json({ success: false, message: 'Insufficient balance' });
+    }
+
+    // Deduct from balance immediately
+    user.balance -= Number(amount);
+    await user.save();
+
+    // Create a pending withdrawal transaction (store as negative amount in ledger)
+    const withdrawTrx = new Transaction({
+      userId: user._id,
+      userPhone: user.phoneNumber,
+      type: 'withdraw',
+      amount: -Number(amount),
+      status: 'pending',
+      description: 'Withdrawal Request'
+    });
+    await withdrawTrx.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Withdrawal request submitted successfully! Pending review.',
+      balance: user.balance
+    });
+  } catch (error) {
+    console.error('Submit withdrawal error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
 module.exports = router;
