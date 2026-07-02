@@ -212,4 +212,105 @@ router.get('/my-transactions', authenticateToken, async (req, res) => {
   }
 });
 
+// @route   GET /api/user/deposits
+// @desc    Get all deposits (Admin only)
+router.get('/deposits', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const list = await Transaction.find({ type: 'deposit' }).sort({ createdAt: -1 });
+    res.json(list);
+  } catch (error) {
+    console.error('Error fetching deposits:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// @route   PUT /api/user/deposit/:id
+// @desc    Approve or reject a deposit request (Admin only)
+router.put('/deposit/:id', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { status } = req.body; // 'approved' or 'rejected'
+    if (status !== 'approved' && status !== 'rejected') {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const transaction = await Transaction.findById(req.params.id);
+    if (!transaction) {
+      return res.status(404).json({ success: false, message: 'Transaction not found' });
+    }
+
+    if (transaction.type !== 'deposit') {
+      return res.status(400).json({ success: false, message: 'Transaction is not a deposit' });
+    }
+
+    if (transaction.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Deposit has already been processed' });
+    }
+
+    transaction.status = status;
+    await transaction.save();
+
+    // If approved, add the amount to user's balance
+    if (status === 'approved') {
+      const user = await User.findById(transaction.userId);
+      if (user) {
+        user.balance += transaction.amount;
+        await user.save();
+      }
+    }
+
+    res.json({ success: true, message: `Deposit request ${status} successfully!`, transaction });
+  } catch (error) {
+    console.error('Update deposit status error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   POST /api/user/deposit
+// @desc    Submit a deposit request (User)
+router.post('/deposit', authenticateToken, async (req, res) => {
+  try {
+    const { amount, method } = req.body;
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid deposit amount' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Create a pending deposit transaction
+    const depositTrx = new Transaction({
+      userId: user._id,
+      userPhone: user.phoneNumber,
+      type: 'deposit',
+      amount: Number(amount),
+      status: 'pending',
+      description: `Deposit - ${method || 'Bank Transfer'}`
+    });
+    await depositTrx.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Deposit request submitted successfully! Pending review.',
+      transaction: depositTrx
+    });
+  } catch (error) {
+    console.error('Submit deposit error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   GET /api/user/my-deposits
+// @desc    Get logged-in user's deposits
+router.get('/my-deposits', authenticateToken, async (req, res) => {
+  try {
+    const list = await Transaction.find({ userId: req.user.id, type: 'deposit' }).sort({ createdAt: -1 });
+    res.json(list);
+  } catch (error) {
+    console.error('Error fetching user deposits:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
 module.exports = router;
