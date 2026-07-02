@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const seedSuperAdmin = require('./utils/seedAdmin');
 const seedTransactions = require('./utils/seedTransactions');
+const seedAnnouncements = require('./utils/seedAnnouncements');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -19,15 +20,22 @@ mongoose.connect(process.env.MONGODB_URI)
     console.log('Connected to MongoDB Atlas successfully!');
     seedSuperAdmin();
     seedTransactions();
+    seedAnnouncements();
   })
   .catch((err) => {
     console.error('Error connecting to MongoDB:', err);
   });
 
 // Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/products', require('./routes/products'));
-app.use('/api/user', require('./routes/user'));
+const authRoutes = require('./routes/auth');
+const userRoutes = require('./routes/user');
+const productRoutes = require('./routes/products');
+const announcementRoutes = require('./routes/announcements');
+
+app.use('/api/auth', authRoutes);
+app.use('/api/user', userRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/announcements', announcementRoutes);
 
 // Basic route
 app.get('/', (req, res) => {
