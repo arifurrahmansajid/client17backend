@@ -111,4 +111,18 @@ router.put('/update/:id', authenticateToken, isAdmin, async (req, res) => {
   }
 });
 
+const Income = require('../models/Income');
+
+// @route   GET /api/user/income
+// @desc    Get all income records (Admin only)
+router.get('/income', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const records = await Income.find().sort({ createdAt: -1 });
+    res.json(records);
+  } catch (error) {
+    console.error('Error fetching income records:', error);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
 module.exports = router;

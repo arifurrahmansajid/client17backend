@@ -1,6 +1,37 @@
 const express = require('express');
 const router = express.Router();
 const Product = require('../models/Product');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const Income = require('../models/Income');
+
+// Middleware to authenticate token
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ message: 'No token provided, authorization denied' });
+  }
+
+  try {
+    const jwtSecret = process.env.JWT_SECRET || 'vip_invest_fallback_secret_key_123!';
+    const decoded = jwt.verify(token, jwtSecret);
+    req.user = decoded.user;
+    next();
+  } catch (error) {
+    res.status(401).json({ message: 'Token is not valid' });
+  }
+};
+
+// Middleware to check if admin
+const isAdmin = (req, res, next) => {
+  if (req.user && (req.user.role === 'admin' || req.user.role === 'super_admin')) {
+    next();
+  } else {
+    res.status(403).json({ message: 'Access denied: Admin role required' });
+  }
+};
 
 // Get all products (sorted by price ascending)
 router.get('/', async (req, res) => {
@@ -14,13 +45,56 @@ router.get('/', async (req, res) => {
 });
 
 // Create a new product (For admin)
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, isAdmin, async (req, res) => {
   try {
     const product = new Product(req.body);
     await product.save();
     res.status(201).json({ success: true, product });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// Update a product (For admin)
+router.put('/:id', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { name, price, days, daily, total, active, badge, image } = req.body;
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (price !== undefined) updateData.price = price;
+    if (days !== undefined) updateData.days = days;
+    if (daily !== undefined) updateData.daily = daily;
+    if (total !== undefined) updateData.total = total;
+    if (active !== undefined) updateData.active = active;
+    if (badge !== undefined) updateData.badge = badge;
+    if (image !== undefined) updateData.image = image;
+
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      { $set: updateData },
+      { new: true }
+    );
+
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    res.json({ success: true, product });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// Delete a product (For admin)
+router.delete('/:id', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const product = await Product.findByIdAndDelete(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    res.json({ success: true, message: 'Product deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
@@ -47,6 +121,62 @@ router.post('/seed', async (req, res) => {
     res.status(201).json({ success: true, message: 'Seeded initial products' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Purchase a VIP product
+router.post('/purchase', authenticateToken, async (req, res) => {
+  try {
+    const { productId } = req.body;
+    if (!productId) {
+      return res.status(400).json({ success: false, message: 'Product ID is required' });
+    }
+
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    if (!product.active) {
+      return res.status(400).json({ success: false, message: 'Product is not active/purchasable' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.balance < product.price) {
+      return res.status(400).json({ success: false, message: 'Insufficient balance' });
+    }
+
+    user.plan = product.name;
+    user.balance -= product.price;
+    await user.save();
+
+    // Log the purchase in Income/Transactions records with negative amount
+    const purchaseLog = new Income({
+      userId: user._id,
+      userPhone: user.phoneNumber,
+      source: `${product.name} Purchase`,
+      amount: -product.price
+    });
+    await purchaseLog.save();
+
+    res.json({
+      success: true,
+      message: 'Product purchased successfully!',
+      user: {
+        id: user._id,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+        balance: user.balance,
+        plan: user.plan
+      }
+    });
+  } catch (error) {
+    console.error('Purchase product error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
   }
 });
 
