@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const Settings = require('../models/Settings');
 const jwt = require('jsonwebtoken');
 
 // Middleware to authenticate token
@@ -406,6 +407,45 @@ router.post('/withdraw', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Submit withdrawal error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   GET /api/user/settings
+// @desc    Get platform settings config (Public)
+router.get('/settings', async (req, res) => {
+  try {
+    let settings = await Settings.findOne();
+    if (!settings) {
+      settings = new Settings();
+      await settings.save();
+    }
+    res.json({ success: true, settings });
+  } catch (error) {
+    console.error('Error fetching settings:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   PUT /api/user/settings
+// @desc    Update platform settings config (Admin only)
+router.put('/settings', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { minDeposit, depositInstructions, minWithdrawal, withdrawFee } = req.body;
+    let settings = await Settings.findOne();
+    if (!settings) {
+      settings = new Settings();
+    }
+
+    if (minDeposit !== undefined) settings.minDeposit = Number(minDeposit);
+    if (depositInstructions !== undefined) settings.depositInstructions = depositInstructions;
+    if (minWithdrawal !== undefined) settings.minWithdrawal = Number(minWithdrawal);
+    if (withdrawFee !== undefined) settings.withdrawFee = Number(withdrawFee);
+
+    await settings.save();
+    res.json({ success: true, message: 'Settings updated successfully!', settings });
+  } catch (error) {
+    console.error('Error updating settings:', error);
     res.status(500).json({ success: false, message: 'Server Error' });
   }
 });

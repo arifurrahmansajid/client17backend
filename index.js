@@ -5,6 +5,7 @@ const cors = require('cors');
 const seedSuperAdmin = require('./utils/seedAdmin');
 const seedTransactions = require('./utils/seedTransactions');
 const seedAnnouncements = require('./utils/seedAnnouncements');
+const seedSettings = require('./utils/seedSettings');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -21,6 +22,7 @@ mongoose.connect(process.env.MONGODB_URI)
     seedSuperAdmin();
     seedTransactions();
     seedAnnouncements();
+    seedSettings();
   })
   .catch((err) => {
     console.error('Error connecting to MongoDB:', err);
