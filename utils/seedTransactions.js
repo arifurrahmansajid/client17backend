@@ -3,11 +3,9 @@ const Transaction = require('../models/Transaction');
 
 const seedTransactions = async () => {
   try {
-    const count = await Transaction.countDocuments();
-    if (count > 0) {
-      console.log('Transactions already seeded.');
-      return;
-    }
+    // Clear the transaction collection for a clean database re-sync
+    await Transaction.deleteMany({});
+    console.log('Cleared existing transactions.');
 
     const users = await User.find({});
     if (users.length === 0) return;
@@ -16,7 +14,7 @@ const seedTransactions = async () => {
     const now = new Date();
 
     for (const user of users) {
-      // 1. Seed a Deposit
+      // 1. Seed a Deposit (Credit)
       const depositDate = new Date();
       depositDate.setDate(now.getDate() - 5);
       seedData.push({
@@ -30,7 +28,7 @@ const seedTransactions = async () => {
         updatedAt: depositDate
       });
 
-      // 2. Seed a Purchase if they have a plan
+      // 2. Seed a Purchase (Debit) if they have a plan
       if (user.plan && user.plan !== 'None') {
         const purchaseDate = new Date();
         purchaseDate.setDate(now.getDate() - 4);
@@ -46,7 +44,7 @@ const seedTransactions = async () => {
           updatedAt: purchaseDate
         });
 
-        // 3. Seed some yields/incomes
+        // 3. Seed some yields/incomes (Credit)
         const dailyYield = user.plan === 'VIP 2' ? 41 : 20;
         for (let i = 1; i <= 3; i++) {
           const yieldDate = new Date();
@@ -65,14 +63,14 @@ const seedTransactions = async () => {
         }
       }
 
-      // 4. Seed a withdrawal
+      // 4. Seed a withdrawal (Debit, stored as negative)
       const withdrawDate = new Date();
       withdrawDate.setDate(now.getDate() - 1);
       seedData.push({
         userId: user._id,
         userPhone: user.phoneNumber,
         type: 'withdraw',
-        amount: 50,
+        amount: -50,
         status: 'approved',
         description: 'Withdrawal to Mobile Money',
         createdAt: withdrawDate,

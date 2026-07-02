@@ -145,14 +145,14 @@ router.get('/stats', authenticateToken, isAdmin, async (req, res) => {
       { $match: { type: 'deposit', status: 'approved' } },
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
-    const totalDeposits = deposits.length > 0 ? deposits[0].total : 0;
+    const totalDeposits = deposits.length > 0 ? Math.abs(deposits[0].total) : 0;
 
     // Calculate withdrawals (sum of type='withdraw' and status='approved')
     const withdrawals = await Transaction.aggregate([
       { $match: { type: 'withdraw', status: 'approved' } },
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
-    const totalWithdrawals = withdrawals.length > 0 ? withdrawals[0].total : 0;
+    const totalWithdrawals = withdrawals.length > 0 ? Math.abs(withdrawals[0].total) : 0;
 
     // Calculate daily income (sum of yields today)
     const today = new Date();
