@@ -12,7 +12,7 @@ const authenticateToken = (req, res, next) => {
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ message: 'No token provided, authorization denied' });
+    return res.status(401).json({ message: 'No token provided, authorization denied now' });
   }
 
   try {
