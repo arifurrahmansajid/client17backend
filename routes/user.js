@@ -966,7 +966,7 @@ router.get('/admin/referrals', authenticateToken, isAdmin, async (req, res) => {
 
     // 1. Calculate stats
     const totalReferrals = referredUsers.length;
-    const pendingInvites = referredUsers.filter(u => !u.plan || u.plan === 'None').length;
+    const pendingInvites = referredUsers.filter(u => u.referralStatus === 'pending').length;
 
     // Sum all referral commission transactions
     const commissionTxs = await Transaction.find({
@@ -996,7 +996,7 @@ router.get('/admin/referrals', authenticateToken, isAdmin, async (req, res) => {
         invitee: invitee.phoneNumber,
         date: invitee.createdAt ? new Date(invitee.createdAt).toISOString().split('T')[0] : "",
         reward: rewardSum,
-        status: invitee.plan && invitee.plan !== 'None' ? 'completed' : 'pending'
+        status: invitee.referralStatus || 'pending'
       });
     }
 
@@ -1011,6 +1011,58 @@ router.get('/admin/referrals', authenticateToken, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching admin referrals stats:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   POST /api/user/admin/referrals/approve/:id
+// @desc    Approve a pending referral and pay inviter a signup reward (Admin only)
+router.post('/admin/referrals/approve/:id', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const invitee = await User.findById(req.params.id);
+    if (!invitee) {
+      return res.status(404).json({ success: false, message: 'Invitee user not found' });
+    }
+
+    if (invitee.referralStatus === 'completed') {
+      return res.status(400).json({ success: false, message: 'Referral is already completed' });
+    }
+
+    if (!invitee.referredBy) {
+      return res.status(400).json({ success: false, message: 'User was not referred by anyone' });
+    }
+
+    const inviter = await User.findById(invitee.referredBy);
+    if (!inviter) {
+      return res.status(404).json({ success: false, message: 'Inviter user not found' });
+    }
+
+    // 1. Mark referral complete
+    invitee.referralStatus = 'completed';
+    await invitee.save();
+
+    // 2. Pay a flat signup commission reward (GHS 30) to inviter
+    const referralReward = 30; // standard GHS 30 signup bonus
+    inviter.balance += referralReward;
+    await inviter.save();
+
+    // 3. Log transaction
+    const rewardLog = new Transaction({
+      userId: inviter._id,
+      userPhone: inviter.phoneNumber,
+      type: 'income',
+      amount: referralReward,
+      status: 'completed',
+      description: `Referral signup commission from ${invitee.phoneNumber} (Approved by Admin)`
+    });
+    await rewardLog.save();
+
+    res.json({
+      success: true,
+      message: `Successfully approved referral. Paid GHS ${referralReward} to ${inviter.phoneNumber}.`
+    });
+  } catch (error) {
+    console.error('Error approving referral:', error);
     res.status(500).json({ success: false, message: 'Server Error' });
   }
 });

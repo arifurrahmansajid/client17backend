@@ -46,6 +46,11 @@ const userSchema = new mongoose.Schema({
     ref: 'User',
     default: null
   },
+  referralStatus: {
+    type: String,
+    enum: ['pending', 'completed'],
+    default: 'pending'
+  },
   certificate: {
     type: String,
     default: 'None'

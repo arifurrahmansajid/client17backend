@@ -153,6 +153,7 @@ router.post('/purchase', authenticateToken, async (req, res) => {
 
     user.plan = product.name;
     user.balance -= product.price;
+    user.referralStatus = 'completed';
     await user.save();
 
     // Log the purchase in Transactions records with negative amount
