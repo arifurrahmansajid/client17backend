@@ -15,18 +15,41 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Database connection check middleware
+app.use((req, res, next) => {
+  if (!process.env.MONGODB_URI) {
+    return res.status(500).json({
+      success: false,
+      message: 'MONGODB_URI is not defined in environment variables. Please add it to your Vercel project settings.'
+    });
+  }
+  
+  if (mongoose.connection.readyState === 0) {
+    mongoose.connect(process.env.MONGODB_URI)
+      .then(() => {
+        console.log('Lazy connected to MongoDB Atlas successfully!');
+      })
+      .catch((err) => {
+        console.error('Lazy connection error connecting to MongoDB:', err);
+      });
+  }
+  next();
+});
+
 // Database connection
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => {
-    console.log('Connected to MongoDB Atlas successfully!');
-    seedSuperAdmin();
-    seedTransactions();
-    seedAnnouncements();
-    seedSettings();
-  })
-  .catch((err) => {
-    console.error('Error connecting to MongoDB:', err);
-  });
+if (process.env.MONGODB_URI) {
+  mongoose.connect(process.env.MONGODB_URI)
+    .then(() => {
+      console.log('Connected to MongoDB Atlas successfully!');
+      seedSuperAdmin();
+      seedTransactions();
+      seedAnnouncements();
+      seedSettings();
+    })
+    .catch((err) => {
+      console.error('Error connecting to MongoDB:', err);
+    });
+}
 
 // Routes
 const authRoutes = require('./routes/auth');
