@@ -57,7 +57,7 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Pre-save hook to generate inviteCode and hash password
-userSchema.pre('save', async function(next) {
+userSchema.pre('save', async function() {
   if (!this.inviteCode) {
     let code;
     let isUnique = false;
@@ -81,7 +81,6 @@ userSchema.pre('save', async function(next) {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
   }
-  next();
 });
 
 
