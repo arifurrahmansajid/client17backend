@@ -22,7 +22,7 @@ const userSchema = new mongoose.Schema({
   },
   balance: {
     type: Number,
-    default: 2000
+    default: 30
   },
   plan: {
     type: String,
@@ -53,7 +53,13 @@ const userSchema = new mongoose.Schema({
   weeklyIncentive: {
     type: Number,
     default: 0
-  }
+  },
+  wallets: [{
+    type: { type: String, required: true },
+    label: { type: String, required: true },
+    number: { type: String, required: true },
+    isDefault: { type: Boolean, default: false }
+  }]
 }, { timestamps: true });
 
 // Pre-save hook to generate inviteCode and hash password

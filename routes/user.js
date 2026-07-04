@@ -54,7 +54,7 @@ const checkAndApplyAutoYield = async (user) => {
       for (let i = 1; i <= awards; i++) {
         const awardDate = new Date(lastYieldDate.getTime() + i * 24 * 60 * 60 * 1000);
         user.balance += product.daily;
-        
+
         const autoYieldLog = new Transaction({
           userId: user._id,
           userPhone: user.phoneNumber,
@@ -101,7 +101,7 @@ router.get('/me', authenticateToken, async (req, res) => {
 router.put('/avatar', authenticateToken, async (req, res) => {
   try {
     const { avatar } = req.body;
-    
+
     if (!avatar) {
       return res.status(400).json({ message: 'Avatar image is required' });
     }
@@ -429,7 +429,7 @@ router.put('/withdraw/:id', authenticateToken, isAdmin, async (req, res) => {
 // @desc    Submit a withdrawal request (User)
 router.post('/withdraw', authenticateToken, async (req, res) => {
   try {
-    const { amount } = req.body;
+    const { amount, walletDetails } = req.body;
     if (!amount || isNaN(amount) || Number(amount) <= 0) {
       return res.status(400).json({ success: false, message: 'Invalid withdrawal amount' });
     }
@@ -454,7 +454,7 @@ router.post('/withdraw', authenticateToken, async (req, res) => {
       type: 'withdraw',
       amount: -Number(amount),
       status: 'pending',
-      description: 'Withdrawal Request'
+      description: walletDetails ? `Withdrawal Request - to ${walletDetails}` : 'Withdrawal Request'
     });
     await withdrawTrx.save();
 
@@ -739,6 +739,219 @@ router.get('/admin/teams', authenticateToken, isAdmin, async (req, res) => {
     res.json({ success: true, teams });
   } catch (error) {
     console.error('Error fetching admin teams stats:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// ==========================================
+// WALLET MANAGEMENT ENDPOINTS
+// ==========================================
+
+// @route   GET /api/user/wallets
+// @desc    Get user's wallets list
+router.get('/wallets', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    res.json({ success: true, wallets: user.wallets || [] });
+  } catch (error) {
+    console.error('Error fetching wallets:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   POST /api/user/wallets
+// @desc    Add a new wallet account
+router.post('/wallets', authenticateToken, async (req, res) => {
+  try {
+    const { type, label, number } = req.body;
+    if (!type || !label || !number) {
+      return res.status(400).json({ success: false, message: 'Please provide type, label, and number' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    // If first wallet, set as default
+    const isDefault = user.wallets.length === 0;
+
+    user.wallets.push({ type, label, number, isDefault });
+    await user.save();
+
+    res.status(201).json({ success: true, wallets: user.wallets });
+  } catch (error) {
+    console.error('Error adding wallet:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   DELETE /api/user/wallets/:id
+// @desc    Delete a wallet account
+router.delete('/wallets/:id', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const walletToDelete = user.wallets.id(req.params.id);
+    if (!walletToDelete) {
+      return res.status(404).json({ success: false, message: 'Wallet not found' });
+    }
+
+    const wasDefault = walletToDelete.isDefault;
+    user.wallets.pull({ _id: req.params.id });
+
+    // If deleted the default wallet, set the first remaining one as default
+    if (wasDefault && user.wallets.length > 0) {
+      user.wallets[0].isDefault = true;
+    }
+
+    await user.save();
+    res.json({ success: true, wallets: user.wallets });
+  } catch (error) {
+    console.error('Error deleting wallet:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   PUT /api/user/wallets/:id/default
+// @desc    Set a wallet account as default
+router.put('/wallets/:id/default', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    let found = false;
+    user.wallets.forEach(w => {
+      if (w._id.toString() === req.params.id) {
+        w.isDefault = true;
+        found = true;
+      } else {
+        w.isDefault = false;
+      }
+    });
+
+    if (!found) {
+      return res.status(404).json({ success: false, message: 'Wallet not found' });
+    }
+
+    await user.save();
+    res.json({ success: true, wallets: user.wallets });
+  } catch (error) {
+    console.error('Error setting default wallet:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+
+// ==========================================
+// SUPPORT TICKET ENDPOINTS
+// ==========================================
+const Ticket = require('../models/Ticket');
+
+// @route   POST /api/user/ticket
+// @desc    Submit deposit problem ticket (User)
+router.post('/ticket', authenticateToken, async (req, res) => {
+  try {
+    const { date, time, userWallet, platformWallet, amount } = req.body;
+    if (!date || !time || !userWallet || !platformWallet || !amount) {
+      return res.status(400).json({ success: false, message: 'Please provide all required fields' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const ticket = new Ticket({
+      userId: user._id,
+      userPhone: user.phoneNumber,
+      date,
+      time,
+      userWallet,
+      platformWallet,
+      amount: Number(amount)
+    });
+
+    await ticket.save();
+    res.status(201).json({ success: true, message: 'Deposit problem ticket submitted successfully', ticket });
+  } catch (error) {
+    console.error('Error submitting support ticket:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   GET /api/user/admin/tickets
+// @desc    Get all support tickets (Admin only)
+router.get('/admin/tickets', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const list = await Ticket.find().sort({ createdAt: -1 });
+    res.json({ success: true, tickets: list });
+  } catch (error) {
+    console.error('Error fetching support tickets:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   PUT /api/user/admin/ticket/:id
+// @desc    Mark support ticket as resolved (Admin only)
+router.put('/admin/ticket/:id', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { status } = req.body; // 'pending' or 'resolved'
+    if (status !== 'pending' && status !== 'resolved') {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const ticket = await Ticket.findById(req.params.id);
+    if (!ticket) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+
+    ticket.status = status;
+    await ticket.save();
+
+    res.json({ success: true, message: `Ticket status updated to ${status} successfully!`, ticket });
+  } catch (error) {
+    console.error('Error updating support ticket status:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   POST /api/user/admin/pay-weekly-incentives
+// @desc    Distribute weekly incentives/salaries to leaders (Admin only)
+router.post('/admin/pay-weekly-incentives', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const leaders = await User.find({ weeklyIncentive: { $gt: 0 } });
+    if (leaders.length === 0) {
+      return res.json({ success: true, message: 'No leaders qualified for weekly incentive payouts.' });
+    }
+
+    let totalPaid = 0;
+    let usersCount = 0;
+
+    for (const leader of leaders) {
+      leader.balance += leader.weeklyIncentive;
+      await leader.save();
+
+      const incentiveLog = new Transaction({
+        userId: leader._id,
+        userPhone: leader.phoneNumber,
+        type: 'income',
+        amount: leader.weeklyIncentive,
+        status: 'completed',
+        description: `Weekly Leadership Incentive (${leader.certificate})`
+      });
+      await incentiveLog.save();
+
+      totalPaid += leader.weeklyIncentive;
+      usersCount++;
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully distributed weekly incentive of GHS ${totalPaid} to ${usersCount} leaders.`,
+      usersCount,
+      totalPaid
+    });
+  } catch (error) {
+    console.error('Error distributing weekly incentives:', error);
     res.status(500).json({ success: false, message: 'Server Error' });
   }
 });
