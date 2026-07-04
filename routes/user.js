@@ -23,15 +23,73 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+// Helper for automated daily yield for referred team members
+const checkAndApplyAutoYield = async (user) => {
+  try {
+    if (!user.referredBy || !user.plan || user.plan === 'None') return;
+
+    const Product = require('../models/Product');
+    const Transaction = require('../models/Transaction');
+    const product = await Product.findOne({ name: user.plan });
+    if (!product) return;
+
+    // Find the last daily yield transaction
+    const lastYield = await Transaction.findOne({
+      userId: user._id,
+      type: 'income',
+      description: { $regex: 'Daily Yield' }
+    }).sort({ createdAt: -1 });
+
+    const now = new Date();
+    let lastYieldDate = lastYield ? lastYield.createdAt : new Date(user.createdAt);
+
+    const msDiff = now.getTime() - lastYieldDate.getTime();
+    const hoursDiff = msDiff / (1000 * 60 * 60);
+
+    if (hoursDiff >= 24) {
+      const daysDue = Math.floor(hoursDiff / 24);
+      // Limit to awarding up to 5 days at a time
+      const awards = Math.min(daysDue, 5);
+
+      for (let i = 1; i <= awards; i++) {
+        const awardDate = new Date(lastYieldDate.getTime() + i * 24 * 60 * 60 * 1000);
+        user.balance += product.daily;
+        
+        const autoYieldLog = new Transaction({
+          userId: user._id,
+          userPhone: user.phoneNumber,
+          type: 'income',
+          amount: product.daily,
+          status: 'completed',
+          description: `${user.plan} Daily Yield (Automated)`,
+          createdAt: awardDate
+        });
+        await autoYieldLog.save();
+      }
+      await user.save();
+      console.log(`Auto-credited ${awards} daily yields to team member ${user.phoneNumber}`);
+    }
+  } catch (err) {
+    console.error("Auto-yield calculation error:", err);
+  }
+};
+
 // @route   GET /api/user/me
 // @desc    Get current user profile
 router.get('/me', authenticateToken, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
+    const user = await User.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    res.json(user);
+
+    // Auto-yield check for team members
+    if (user.referredBy && user.plan && user.plan !== 'None') {
+      await checkAndApplyAutoYield(user);
+    }
+
+    const cleanUser = await User.findById(user._id).select('-password');
+    res.json(cleanUser);
   } catch (error) {
     console.error('Error fetching user profile:', error);
     res.status(500).json({ message: 'Server Error' });
@@ -431,7 +489,7 @@ router.get('/settings', async (req, res) => {
 // @desc    Update platform settings config (Admin only)
 router.put('/settings', authenticateToken, isAdmin, async (req, res) => {
   try {
-    const { minDeposit, depositInstructions, minWithdrawal, withdrawFee } = req.body;
+    const { minDeposit, depositInstructions, minWithdrawal, withdrawFee, commissionRateL1, commissionRateL2, commissionRateL3 } = req.body;
     let settings = await Settings.findOne();
     if (!settings) {
       settings = new Settings();
@@ -441,11 +499,246 @@ router.put('/settings', authenticateToken, isAdmin, async (req, res) => {
     if (depositInstructions !== undefined) settings.depositInstructions = depositInstructions;
     if (minWithdrawal !== undefined) settings.minWithdrawal = Number(minWithdrawal);
     if (withdrawFee !== undefined) settings.withdrawFee = Number(withdrawFee);
+    if (commissionRateL1 !== undefined) settings.commissionRateL1 = Number(commissionRateL1);
+    if (commissionRateL2 !== undefined) settings.commissionRateL2 = Number(commissionRateL2);
+    if (commissionRateL3 !== undefined) settings.commissionRateL3 = Number(commissionRateL3);
 
     await settings.save();
     res.json({ success: true, message: 'Settings updated successfully!', settings });
   } catch (error) {
     console.error('Error updating settings:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   GET /api/user/team
+// @desc    Get referral team details for logged-in user
+router.get('/team', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    // Level 1
+    const l1 = await User.find({ referredBy: user._id }).select('phoneNumber plan createdAt');
+    const l1Ids = l1.map(u => u._id);
+
+    // Level 2
+    let l2 = [];
+    if (l1Ids.length > 0) {
+      l2 = await User.find({ referredBy: { $in: l1Ids } }).select('phoneNumber plan createdAt');
+    }
+    const l2Ids = l2.map(u => u._id);
+
+    // Level 3
+    let l3 = [];
+    if (l2Ids.length > 0) {
+      l3 = await User.find({ referredBy: { $in: l2Ids } }).select('phoneNumber plan createdAt');
+    }
+
+    // Load active settings to know rates
+    const settings = await Settings.findOne() || { commissionRateL1: 20, commissionRateL2: 3, commissionRateL3: 2 };
+
+    // Helper: calculate total commissions contributed by a list of user IDs for this user
+    const commissions = await Transaction.find({
+      userId: user._id,
+      type: 'income',
+      description: { $regex: 'Commission' }
+    });
+
+    const getContribution = (memberPhone) => {
+      const matches = commissions.filter(c => c.description && c.description.includes(memberPhone));
+      return matches.reduce((sum, c) => sum + c.amount, 0);
+    };
+
+    const formatMember = (u, level) => ({
+      _id: u._id,
+      phoneNumber: u.phoneNumber,
+      plan: u.plan || 'None',
+      createdAt: u.createdAt,
+      level,
+      isActive: u.plan && u.plan !== 'None',
+      contribution: getContribution(u.phoneNumber)
+    });
+
+    const l1Members = l1.map(u => formatMember(u, 1));
+    const l2Members = l2.map(u => formatMember(u, 2));
+    const l3Members = l3.map(u => formatMember(u, 3));
+
+    const totalMembersCount = l1.length + l2.length + l3.length;
+    const activeL1 = l1Members.filter(m => m.isActive).length;
+    const activeL2 = l2Members.filter(m => m.isActive).length;
+    const activeL3 = l3Members.filter(m => m.isActive).length;
+    const totalActiveCount = activeL1 + activeL2 + activeL3;
+
+    const totalIncome = commissions.reduce((sum, c) => sum + c.amount, 0);
+
+    res.json({
+      success: true,
+      inviteCode: user.inviteCode,
+      certificate: user.certificate || 'None',
+      weeklyIncentive: user.weeklyIncentive || 0,
+      stats: {
+        totalMembers: totalMembersCount,
+        activeMembers: totalActiveCount,
+        teamIncome: totalIncome,
+        level1Count: l1.length,
+        level2Count: l2.length,
+        level3Count: l3.length,
+        activeLevel1: activeL1,
+        activeLevel2: activeL2,
+        activeLevel3: activeL3
+      },
+      members: {
+        level1: l1Members,
+        level2: l2Members,
+        level3: l3Members
+      },
+      commissionRates: {
+        level1: settings.commissionRateL1 || 20,
+        level2: settings.commissionRateL2 || 3,
+        level3: settings.commissionRateL3 || 2
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching team data:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   POST /api/user/daily-work
+// @desc    Claim daily yield manually for standard users
+router.post('/daily-work', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (!user.plan || user.plan === 'None') {
+      return res.status(400).json({ success: false, message: 'You do not have an active VIP plan to work on.' });
+    }
+
+    // Team members cannot do work manually
+    if (user.referredBy) {
+      return res.status(403).json({
+        success: false,
+        isAutomated: true,
+        message: 'Automated Team Account: You do not need to do manual work. Your earnings are credited automatically.'
+      });
+    }
+
+    // Check if claimed in the last 24 hours
+    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentYield = await Transaction.findOne({
+      userId: user._id,
+      type: 'income',
+      description: { $regex: 'Daily Yield' },
+      createdAt: { $gte: last24h }
+    });
+
+    if (recentYield) {
+      return res.status(400).json({ success: false, message: 'You have already collected your daily yield for today. Come back tomorrow!' });
+    }
+
+    // Fetch product details
+    const Product = require('../models/Product');
+    const product = await Product.findOne({ name: user.plan });
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Active plan product details not found.' });
+    }
+
+    // Award daily income
+    user.balance += product.daily;
+    await user.save();
+
+    const yieldLog = new Transaction({
+      userId: user._id,
+      userPhone: user.phoneNumber,
+      type: 'income',
+      amount: product.daily,
+      status: 'completed',
+      description: `${user.plan} Daily Yield (Manual Claim)`
+    });
+    await yieldLog.save();
+
+    res.json({
+      success: true,
+      message: `Daily yield of GHS ${product.daily} claimed successfully!`,
+      balance: user.balance
+    });
+  } catch (error) {
+    console.error('Manual claim yield error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
+// @route   GET /api/user/admin/teams
+// @desc    Get all teams statistics (Admin only)
+router.get('/admin/teams', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const users = await User.find({ role: 'user' });
+    const teams = [];
+
+    for (const u of users) {
+      // Find L1
+      const l1 = await User.find({ referredBy: u._id });
+      if (l1.length === 0) continue; // No team
+
+      const l1Ids = l1.map(x => x._id);
+
+      // Find L2
+      let l2 = [];
+      if (l1Ids.length > 0) {
+        l2 = await User.find({ referredBy: { $in: l1Ids } });
+      }
+      const l2Ids = l2.map(x => x._id);
+
+      // Find L3
+      let l3 = [];
+      if (l2Ids.length > 0) {
+        l3 = await User.find({ referredBy: { $in: l2Ids } });
+      }
+
+      const allTeam = [...l1, ...l2, ...l3];
+      const activeMembers = allTeam.filter(x => x.plan && x.plan !== 'None').length;
+
+      // Calculate commissions earned
+      const commissions = await Transaction.find({
+        userId: u._id,
+        type: 'income',
+        description: { $regex: 'Commission' }
+      });
+      const totalCommission = commissions.reduce((sum, c) => sum + c.amount, 0);
+
+      // Create members detail list
+      const members = allTeam.slice(0, 10).map(m => {
+        const level = l1Ids.includes(m._id) ? 1 : l2Ids.includes(m._id) ? 2 : 3;
+        return {
+          phone: m.phoneNumber,
+          level,
+          plan: m.plan || 'None',
+          contribution: commissions.filter(c => c.description && c.description.includes(m.phoneNumber)).reduce((s, c) => s + c.amount, 0)
+        };
+      });
+
+      teams.push({
+        id: u._id,
+        inviteCode: u.inviteCode || 'N/A',
+        phone: u.phoneNumber,
+        joinDate: u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-CA') : 'N/A',
+        teamSize: allTeam.length,
+        activeMembers,
+        commission: totalCommission,
+        status: u.status === 'suspended' ? 'Banned' : 'Active',
+        banReason: u.status === 'suspended' ? 'Suspended by admin.' : '',
+        teamDetails: { level1: l1.length, level2: l2.length, level3: l3.length },
+        members
+      });
+    }
+
+    res.json({ success: true, teams });
+  } catch (error) {
+    console.error('Error fetching admin teams stats:', error);
     res.status(500).json({ success: false, message: 'Server Error' });
   }
 });

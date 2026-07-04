@@ -16,6 +16,18 @@ const SettingsSchema = new mongoose.Schema({
   withdrawFee: {
     type: Number,
     default: 5
+  },
+  commissionRateL1: {
+    type: Number,
+    default: 20
+  },
+  commissionRateL2: {
+    type: Number,
+    default: 3
+  },
+  commissionRateL3: {
+    type: Number,
+    default: 2
   }
 }, { timestamps: true });
 

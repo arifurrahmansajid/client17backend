@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 // Register Route
 router.post('/register', async (req, res) => {
   try {
-    const { phoneNumber, password } = req.body;
+    const { phoneNumber, password, inviteCode } = req.body;
 
     // Check if user exists
     let user = await User.findOne({ phoneNumber });
@@ -14,13 +14,24 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'User already exists' });
     }
 
+    let referredByUser = null;
+    if (inviteCode) {
+      referredByUser = await User.findOne({ inviteCode: inviteCode.trim().toUpperCase() });
+    }
+
     // Create new user
     user = new User({
       phoneNumber,
-      password
+      password,
+      referredBy: referredByUser ? referredByUser._id : null
     });
 
     await user.save();
+
+    if (referredByUser) {
+      referredByUser.referrals = (referredByUser.referrals || 0) + 1;
+      await referredByUser.save();
+    }
 
     res.status(201).json({ message: 'User registered successfully' });
   } catch (error) {

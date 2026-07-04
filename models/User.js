@@ -36,15 +36,55 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ['active', 'pending', 'suspended'],
     default: 'active'
+  },
+  inviteCode: {
+    type: String,
+    unique: true
+  },
+  referredBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  certificate: {
+    type: String,
+    default: 'None'
+  },
+  weeklyIncentive: {
+    type: Number,
+    default: 0
   }
 }, { timestamps: true });
 
-// Hash password before saving
-userSchema.pre('save', async function() {
-  if (!this.isModified('password')) return;
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
+// Pre-save hook to generate inviteCode and hash password
+userSchema.pre('save', async function(next) {
+  if (!this.inviteCode) {
+    let code;
+    let isUnique = false;
+    let attempts = 0;
+    while (!isUnique && attempts < 10) {
+      code = '';
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      for (let i = 0; i < 6; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      const existingUser = await this.constructor.findOne({ inviteCode: code });
+      if (!existingUser) {
+        isUnique = true;
+      }
+      attempts++;
+    }
+    this.inviteCode = code;
+  }
+
+  if (this.isModified('password')) {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+  }
+  next();
 });
+
+
 
 // Compare password
 userSchema.methods.matchPassword = async function(enteredPassword) {

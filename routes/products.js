@@ -4,6 +4,7 @@ const Product = require('../models/Product');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
+const Settings = require('../models/Settings');
 
 // Middleware to authenticate token
 const authenticateToken = (req, res, next) => {
@@ -164,6 +165,125 @@ router.post('/purchase', authenticateToken, async (req, res) => {
       description: `${product.name} Purchase`
     });
     await purchaseLog.save();
+
+    // Helper to recalculate rank & certificate
+    const recalculateRankAndIncentive = async (userId) => {
+      try {
+        const uNode = await User.findById(userId);
+        if (!uNode) return;
+
+        // Level 1
+        const l1 = await User.find({ referredBy: userId });
+        const l1Ids = l1.map(u => u._id);
+
+        // Level 2
+        let l2 = [];
+        if (l1Ids.length > 0) {
+          l2 = await User.find({ referredBy: { $in: l1Ids } });
+        }
+        const l2Ids = l2.map(u => u._id);
+
+        // Level 3
+        let l3 = [];
+        if (l2Ids.length > 0) {
+          l3 = await User.find({ referredBy: { $in: l2Ids } });
+        }
+
+        const allTeam = [...l1, ...l2, ...l3];
+        const activeCount = allTeam.filter(u => u.plan && u.plan !== 'None').length;
+
+        let cert = 'None';
+        let incentive = 0;
+
+        if (activeCount >= 150) {
+          cert = 'Business Consultant';
+          incentive = 250;
+        } else if (activeCount >= 25) {
+          cert = 'High Commissioner';
+          incentive = 200;
+        } else if (activeCount >= 10) {
+          cert = 'Business Specialist';
+          incentive = 150;
+        }
+
+        uNode.certificate = cert;
+        uNode.weeklyIncentive = incentive;
+        await uNode.save();
+        console.log(`Updated rank for ${uNode.phoneNumber}: Cert=${cert}, ActiveCount=${activeCount}`);
+      } catch (err) {
+        console.error("Error recalculating rank:", err);
+      }
+    };
+
+    // Process Referral Commissions (MLM)
+    try {
+      const settings = await Settings.findOne() || { commissionRateL1: 20, commissionRateL2: 3, commissionRateL3: 2 };
+      
+      // Level 1
+      if (user.referredBy) {
+        const l1Referrer = await User.findById(user.referredBy);
+        if (l1Referrer) {
+          const l1Comm = Number((product.price * (settings.commissionRateL1 / 100)).toFixed(2));
+          l1Referrer.balance += l1Comm;
+          await l1Referrer.save();
+
+          const commLogL1 = new Transaction({
+            userId: l1Referrer._id,
+            userPhone: l1Referrer.phoneNumber,
+            type: 'income',
+            amount: l1Comm,
+            status: 'completed',
+            description: `Level 1 Commission from ${user.phoneNumber} (${product.name} Purchase)`
+          });
+          await commLogL1.save();
+          await recalculateRankAndIncentive(l1Referrer._id);
+
+          // Level 2
+          if (l1Referrer.referredBy) {
+            const l2Referrer = await User.findById(l1Referrer.referredBy);
+            if (l2Referrer) {
+              const l2Comm = Number((product.price * (settings.commissionRateL2 / 100)).toFixed(2));
+              l2Referrer.balance += l2Comm;
+              await l2Referrer.save();
+
+              const commLogL2 = new Transaction({
+                userId: l2Referrer._id,
+                userPhone: l2Referrer.phoneNumber,
+                type: 'income',
+                amount: l2Comm,
+                status: 'completed',
+                description: `Level 2 Commission from ${user.phoneNumber} (${product.name} Purchase)`
+              });
+              await commLogL2.save();
+              await recalculateRankAndIncentive(l2Referrer._id);
+
+              // Level 3
+              if (l2Referrer.referredBy) {
+                const l3Referrer = await User.findById(l2Referrer.referredBy);
+                if (l3Referrer) {
+                  const l3Comm = Number((product.price * (settings.commissionRateL3 / 100)).toFixed(2));
+                  l3Referrer.balance += l3Comm;
+                  await l3Referrer.save();
+
+                  const commLogL3 = new Transaction({
+                    userId: l3Referrer._id,
+                    userPhone: l3Referrer.phoneNumber,
+                    type: 'income',
+                    amount: l3Comm,
+                    status: 'completed',
+                    description: `Level 3 Commission from ${user.phoneNumber} (${product.name} Purchase)`
+                  });
+                  await commLogL3.save();
+                  await recalculateRankAndIncentive(l3Referrer._id);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (mlmError) {
+      console.error("Error distributing MLM commission:", mlmError);
+    }
 
     res.json({
       success: true,
