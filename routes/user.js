@@ -956,4 +956,63 @@ router.post('/admin/pay-weekly-incentives', authenticateToken, isAdmin, async (r
   }
 });
 
+// @route   GET /api/user/admin/referrals
+// @desc    Get all referral records and statistics (Admin only)
+router.get('/admin/referrals', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const referredUsers = await User.find({ referredBy: { $ne: null } })
+      .populate('referredBy', 'phoneNumber')
+      .sort({ createdAt: -1 });
+
+    // 1. Calculate stats
+    const totalReferrals = referredUsers.length;
+    const pendingInvites = referredUsers.filter(u => !u.plan || u.plan === 'None').length;
+
+    // Sum all referral commission transactions
+    const commissionTxs = await Transaction.find({
+      type: 'income',
+      description: { $regex: /Commission/i }
+    });
+    const totalRewardsPaid = commissionTxs.reduce((sum, tx) => sum + tx.amount, 0);
+
+    // 2. Build detailed referral list
+    const referralsList = [];
+    for (const invitee of referredUsers) {
+      if (!invitee.referredBy) continue;
+
+      // Find all commissions paid to this inviter for this invitee
+      const inviterId = invitee.referredBy._id;
+      const escapedPhone = invitee.phoneNumber.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const txs = await Transaction.find({
+        userId: inviterId,
+        type: 'income',
+        description: { $regex: new RegExp(escapedPhone, 'i') }
+      });
+      const rewardSum = txs.reduce((sum, tx) => sum + tx.amount, 0);
+
+      referralsList.push({
+        id: invitee._id,
+        inviter: invitee.referredBy.phoneNumber,
+        invitee: invitee.phoneNumber,
+        date: invitee.createdAt ? new Date(invitee.createdAt).toISOString().split('T')[0] : "",
+        reward: rewardSum,
+        status: invitee.plan && invitee.plan !== 'None' ? 'completed' : 'pending'
+      });
+    }
+
+    res.json({
+      success: true,
+      stats: {
+        totalReferrals,
+        totalRewardsPaid,
+        pendingInvites
+      },
+      referrals: referralsList
+    });
+  } catch (error) {
+    console.error('Error fetching admin referrals stats:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
 module.exports = router;
